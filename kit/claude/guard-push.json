@@ -1,0 +1,6 @@
+{
+  "protectedBranches": ["main", "master", "production"],
+  "stateFile": ".planning/STATE.md",
+  "blockerSection": "### Blockers/Concerns",
+  "tokens": ["push blocker", "do NOT git push"]
+}

@@ -1,0 +1,7 @@
+{
+  "map": "RECONSTRUCTION.md",
+  "codebaseDir": ".planning/codebase",
+  "scopedPaths": ["src"],
+  "maxDays": 30,
+  "maxCommits": 150
+}
