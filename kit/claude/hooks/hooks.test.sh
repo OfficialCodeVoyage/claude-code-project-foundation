@@ -252,6 +252,18 @@ guard "cd elsewhere && git push origin feat/work -> allow (the branch is named)"
 guard "git -C elsewhere push origin feat/work -> allow (the branch is named)" 0 "$F" "git -C ../r-main push origin feat/work"
 guard "echo cd && git push -> allow (cd as an argument changes nothing)" 0 "$F" "echo cd && git push"
 guard "cd elsewhere && git push --dry-run -> allow" 0 "$F" "cd ../r-main && git push --dry-run"
+# a command word that an expansion could turn into cd is a directory change too
+guard "d=cd; \$d elsewhere && git push -> block (variable as the command word)" 2 "$F" 'd=cd; $d ../r-main && git push'
+guard "\$(echo cd) elsewhere && git push -> block (substitution as the command word)" 2 "$F" '$(echo cd) ../r-main && git push'
+guard "c{d,} elsewhere && git push -> block (brace expansion)" 2 "$F" 'c{d,} ../r-main && git push'
+guard "c? elsewhere && git push -> block (a glob can match a file named cd)" 2 "$F" 'c? ../r-main && git push'
+guard "command \$d elsewhere; git push -> block" 2 "$F" 'command $d ../r-main; git push'
+guard "bash -c '\$d elsewhere && git push' -> block (nested)" 2 "$F" "bash -c '\$d ../r-main && git push'"
+guard "\$d elsewhere && git push origin HEAD -> block" 2 "$F" '$d ../r-main && git push origin HEAD'
+guard "\$d elsewhere && git push origin feat/work -> allow (the branch is named)" 0 "$F" '$d ../r-main && git push origin feat/work'
+guard "[ -f x ] && git push -> allow ([ is a test, not an expansion)" 0 "$F" "[ -f x ] && git push"
+guard "echo \$HOME && git push -> allow (an expansion as an argument moves nothing)" 0 "$F" 'echo $HOME && git push'
+guard "~/bin/tool && git push -> allow (a program cannot move the shell)" 0 "$F" "~/bin/tool && git push"
 
 # dry-run flags are read the way git reads them
 guard "-on origin main -> block (-o takes 'n' as its value: not a dry run)" 2 "$R" "git push -on origin main"

@@ -47,7 +47,9 @@
 # --no-dry-run cancels the dry run, and in a short-option cluster the text
 # after `o` is -o's value (`-on` is a push option named "n", not a dry run).
 # The hook reads the branch and config of the repo it runs in. So when the
-# command changes directory (cd, pushd, popd) or points git elsewhere (git -C,
+# command changes directory (cd, pushd, popd, or a command word that an
+# expansion could turn into one: `$d`, `$(...)`, `c{d,}`, a glob) or points git
+# elsewhere (git -C,
 # --git-dir, --work-tree, GIT_DIR= / GIT_WORK_TREE=), a push with no refspec
 # or with HEAD / @ as its destination cannot be proven and is a hit; a push
 # that names its branch is still judged by that name.
@@ -316,6 +318,13 @@ function is_reader(b) { return (b ~ /^(cat|head|tail|wc|uniq|grep|egrep|fgrep|cu
 function is_safe_cmd(b) { return (is_reader(b) || b ~ /^(sort|tee|echo|printf|git|gh|ls|test|\[|true|false)$/) }
 function unprovable(w) { return (w ~ /[$`~]/ || w ~ /\{.*\}/) }   # an expansion decides what runs
 function base(w,   b) { b = w; sub(/^.*\//, "", b); return b }
+# may_be_cd: 1 when word w could turn into `cd` once the shell expands it: a
+# variable or substitution, a brace expansion, or a glob (a file named "cd").
+# A tilde cannot: it expands to a path, and a program cannot move the shell.
+function may_be_cd(w) {
+  if (w == "[" || w == "[[") return 0
+  return (w ~ /[$`*?\[]/ || w ~ /\{.*\}/)
+}
 function code_tok(w,   b) {
   b = base(w)
   return (b == "eval" || b == "source" || w == "." || is_interp(b) || w ~ /^-(exec|execdir|ok|okdir)$/)
@@ -518,7 +527,7 @@ END {
       # hook can read may not be the ones a bare push uses ("D" line)
       c0 = stage_word(tok, nt)
       if (c0 > 0 && tok[c0] == "command") { c0++; while (c0 <= nt && tok[c0] ~ /^-/) c0++ }
-      if (c0 > 0 && c0 <= nt && tok[c0] ~ /^(cd|pushd|popd|chdir)$/ && !dch) { print "D"; dch = 1 }
+      if (c0 > 0 && c0 <= nt && !dch && (tok[c0] ~ /^(cd|pushd|popd|chdir)$/ || may_be_cd(tok[c0]))) { print "D"; dch = 1 }
       for (i = 1; i <= nt; i++) {
         if (tok[i] ~ /^GIT_CONFIG[A-Za-z0-9_]*=/) {   # env config for any later git, nested scans too
           if (!gce) print "G"
@@ -526,7 +535,7 @@ END {
         }
         if (tok[i] ~ /^GIT_(DIR|WORK_TREE|COMMON_DIR)=/ && !dch) { print "D"; dch = 1 }   # another repo, nested scans too
         # mode b dissolved the quotes, so a payload's `cd` no longer leads its stage: any such word counts
-        if (mode == "b" && tok[i] ~ /^(cd|pushd|popd|chdir)$/ && !dch) { print "D"; dch = 1 }
+        if (mode == "b" && !dch && (tok[i] ~ /^(cd|pushd|popd|chdir)$/ || may_be_cd(tok[i]))) { print "D"; dch = 1 }
         if (!is_git(tok[i])) continue
         cfg = gce ? 2 : 0
         j = i + 1
