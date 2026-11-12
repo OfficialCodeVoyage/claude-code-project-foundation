@@ -238,6 +238,32 @@ guard "feature branch explicit main -> block" 2 "$F" "git push origin main"
 D=$TMP/r-detached; mk_repo "$D" main; state_active "$D"; ( cd "$D" && git checkout -q --detach ) >/dev/null 2>&1
 guard "bare push on detached HEAD -> block (branch unknown)" 2 "$D" "git push"
 
+# the hook reads the branch of the repo it runs in: a command that goes elsewhere makes a bare push unprovable
+guard "cd elsewhere && bare git push (feature branch here) -> block" 2 "$F" "cd ../r-main && git push"
+guard "pushd elsewhere && bare git push -> block" 2 "$F" "pushd ../r-main && git push"
+guard "git -C elsewhere push (bare) -> block" 2 "$F" "git -C ../r-main push"
+guard "git --git-dir=elsewhere push (bare) -> block" 2 "$F" "git --git-dir=../r-main/.git push"
+guard "git --work-tree elsewhere push origin (no refspec) -> block" 2 "$F" "git --work-tree ../r-main push origin"
+guard "GIT_DIR=elsewhere git push (bare) -> block" 2 "$F" "GIT_DIR=../r-main/.git git push"
+guard "git -C elsewhere push origin HEAD -> block (HEAD is the other repo's)" 2 "$F" "git -C ../r-main push origin HEAD"
+guard "bash -c 'cd elsewhere && git push' -> block (nested)" 2 "$F" "bash -c 'cd ../r-main && git push'"
+guard "command cd elsewhere; git push -> block" 2 "$F" "command cd ../r-main; git push"
+guard "cd elsewhere && git push origin feat/work -> allow (the branch is named)" 0 "$F" "cd ../r-main && git push origin feat/work"
+guard "git -C elsewhere push origin feat/work -> allow (the branch is named)" 0 "$F" "git -C ../r-main push origin feat/work"
+guard "echo cd && git push -> allow (cd as an argument changes nothing)" 0 "$F" "echo cd && git push"
+guard "cd elsewhere && git push --dry-run -> allow" 0 "$F" "cd ../r-main && git push --dry-run"
+
+# dry-run flags are read the way git reads them
+guard "-on origin main -> block (-o takes 'n' as its value: not a dry run)" 2 "$R" "git push -on origin main"
+guard "-fon origin main -> block" 2 "$R" "git push -fon origin main"
+guard "-fo x main feat/work -> allow (x is -o's value, main is the remote)" 0 "$R" "git push -fo x main feat/work"
+guard "-fn origin main -> allow (dry run inside a cluster)" 0 "$R" "git push -fn origin main"
+guard "-nf origin main -> allow" 0 "$R" "git push -nf origin main"
+guard "--dry-run --no-dry-run origin main -> block (the last flag wins)" 2 "$R" "git push --dry-run --no-dry-run origin main"
+guard "-n --no-dry-run origin main -> block" 2 "$R" "git push -n --no-dry-run origin main"
+guard "--dry-run --no-dry origin main -> block (abbreviated)" 2 "$R" "git push --dry-run --no-dry origin main"
+guard "--no-dry-run --dry-run origin main -> allow (the last flag wins)" 0 "$R" "git push --no-dry-run --dry-run origin main"
+
 # A: $'...' / $"..." quoting
 guard "\$'git' push origin main -> block" 2 "$F" "\$'git' push origin main"
 guard "\$\"git\" push origin main -> block" 2 "$F" '$"git" push origin main'
@@ -703,7 +729,7 @@ if [ "$RC" = 0 ] && [ "$first" = "Restored after compaction from .planning/STATE
 case $STDOUT in *"## Current focus"*"Ship the billing rewrite."*"Finish the webhook handler."*) ok "compact: prints the section (heading, body, sub-heading, fence)" ;; *) bad "compact: prints the section" "$STDOUT" ;; esac
 case $STDOUT in *"inside a code fence"*) ok "compact: '## ' inside a code fence does not end the section" ;; *) bad "compact: '## ' inside a code fence does not end the section" "$STDOUT" ;; esac
 case $STDOUT in *"NOT-IN-OUTPUT"*|*"Not this section"*) bad "compact: other sections excluded" "$STDOUT" ;; *) ok "compact: other sections excluded" ;; esac
-for src in startup resume clear; do
+for src in startup resume clear fork; do
   run_hook restore-state.sh "$S" "$(session_payload $src "$S")"
   if [ "$RC" = 0 ] && [ -z "$STDOUT" ]; then ok "source=$src prints nothing, exit 0"; else bad "source=$src prints nothing, exit 0" "rc=$RC out=[$STDOUT]"; fi
 done

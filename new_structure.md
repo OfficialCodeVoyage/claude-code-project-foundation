@@ -498,7 +498,7 @@ Facts that shape these choices (official docs):
 - **Rule order: deny, then ask, then allow; the first match wins.** So a project `ask` on `git push` holds even though the owner's global settings carry an old `allow` for `Bash(git push:*)`.
 - **Deny rules don't cover subprocesses.** They cover Claude's file tools and recognised shell reads (`cat`, `sed`). A subprocess such as a Python script can still open the file; only the sandbox (§14) stops that. `.claudeignore` has **no effect**, so use deny rules.
 - **The `rtk git push` ask entries exist because of the global RTK hook.** It rewrites commands to `rtk git …`, and permission rules are checked against the rewritten command. Don't test it yourself: you never push, and the prompt would stall the session. List "ask rule not exercised" under not proven, and give the owner `! git push --dry-run` to try.
-- **SessionStart output is capped.** It becomes context, up to 10,000 characters. Write it as plain facts. Imperative "SYSTEM:" wording can trip the prompt-injection defences.
+- **SessionStart output is capped.** It becomes context, up to 10,000 characters; past that it is saved to a file and Claude gets the path plus a short preview. Write it as plain facts. Imperative "SYSTEM:" wording can trip the prompt-injection defences.
 
 Rules for every hook you add:
 - **Command form (guarded launcher):**

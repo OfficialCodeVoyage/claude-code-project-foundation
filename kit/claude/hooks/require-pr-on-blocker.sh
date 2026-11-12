@@ -43,7 +43,14 @@
 # (unset -> hit); simple/current/unset -> the CURRENT branch decides; detached
 # HEAD -> hit. `git -c` / `--config-env` with a push.* key makes a bare push a
 # hit; with a remote.* / branch.* key, or any GIT_CONFIG*= assignment in the
-# command, every push is a hit. --dry-run and --tags-only pass.
+# command, every push is a hit. --dry-run and --tags-only pass; a later
+# --no-dry-run cancels the dry run, and in a short-option cluster the text
+# after `o` is -o's value (`-on` is a push option named "n", not a dry run).
+# The hook reads the branch and config of the repo it runs in. So when the
+# command changes directory (cd, pushd, popd) or points git elsewhere (git -C,
+# --git-dir, --work-tree, GIT_DIR= / GIT_WORK_TREE=), a push with no refspec
+# or with HEAD / @ as its destination cannot be proven and is a hit; a push
+# that names its branch is still judged by that name.
 #
 # Code pipelines: a pipeline (stages joined by | or |&, cut only by ; && || &
 # and newline; parens and redirections such as 2>&1 are transparent) is CODE
@@ -76,7 +83,8 @@
 #
 # Known gaps (text parsing, not a shell): text that reaches a shell outside the
 # command (a temp file then `bash f`, `curl ... | sh`, a variable exported in an
-# EARLIER command and eval'd now) is not seen; a word split
+# EARLIER command and eval'd now) is not seen; a directory change made by a
+# wrapper (`env -C dir`, `sudo -D dir`) is not seen; a word split
 # hidden in an OPTION value (`-o $X`, `--repo=$(...)`) is not seen; `$'\x67it'`
 # escapes are not decoded (the fast path needs a literal "git"); a `case`
 # pattern ")" inside `$(...)` can end it early; a top-level heredoc body is
@@ -506,16 +514,25 @@ END {
     nseg = split(pl[kp], seg, "[\004\005]")
     for (k = 1; k <= nseg; k++) {
       nt = split(seg[k], tok, " ")
+      # a directory change anywhere in the command: the branch and config this
+      # hook can read may not be the ones a bare push uses ("D" line)
+      c0 = stage_word(tok, nt)
+      if (c0 > 0 && tok[c0] == "command") { c0++; while (c0 <= nt && tok[c0] ~ /^-/) c0++ }
+      if (c0 > 0 && c0 <= nt && tok[c0] ~ /^(cd|pushd|popd|chdir)$/ && !dch) { print "D"; dch = 1 }
       for (i = 1; i <= nt; i++) {
         if (tok[i] ~ /^GIT_CONFIG[A-Za-z0-9_]*=/) {   # env config for any later git, nested scans too
           if (!gce) print "G"
           gce = 1
         }
+        if (tok[i] ~ /^GIT_(DIR|WORK_TREE|COMMON_DIR)=/ && !dch) { print "D"; dch = 1 }   # another repo, nested scans too
+        # mode b dissolved the quotes, so a payload's `cd` no longer leads its stage: any such word counts
+        if (mode == "b" && tok[i] ~ /^(cd|pushd|popd|chdir)$/ && !dch) { print "D"; dch = 1 }
         if (!is_git(tok[i])) continue
         cfg = gce ? 2 : 0
         j = i + 1
         while (j <= nt && substr(tok[j], 1, 1) == "-") {
           o = tok[j]
+          if ((o == "-C" || o ~ /^--(git-dir|work-tree)(=|$)/) && !dch) { print "D"; dch = 1 }   # git runs somewhere else
           if (o == "-c" || o == "--config-env") { if (j < nt) cfg = maxi(cfg, cfg_class(tok[j + 1])); j += 2; continue }
           if (substr(o, 1, 13) == "--config-env=") cfg = maxi(cfg, cfg_class(substr(o, 14)))
           else if (substr(o, 1, 2) == "-c" && length(o) > 2) cfg = maxi(cfg, cfg_class(substr(o, 3)))
@@ -532,12 +549,21 @@ END {
           if (!dd && a == "--") { dd = 1; continue }
           if (!dd && substr(a, 1, 1) == "-" && length(a) > 1) {
             if (a == "--dry-run") dry = 1
+            else if (a ~ /^--no-d/) dry = 0                        # --no-dry-run (or an abbreviation): the last flag wins
             else if (a == "--all" || a == "--mirror" || a == "--branches") all = 1
             else if (a == "--tags") tags = 1
             else if (a == "-o" || a == "--push-option" || a == "--receive-pack" || a == "--exec") skip = 1
             else if (a == "--repo") { repo = 1; skip = 1 }
             else if (substr(a, 1, 7) == "--repo=") repo = 1
-            else if (a ~ /^-[A-Za-z0-9]+$/ && index(a, "n") > 0) dry = 1
+            else if (a ~ /^-[A-Za-z0-9]+$/) {
+              # a short-option cluster, read the way git does: -o takes a value, so
+              # the rest of the cluster (or the next word) is that value, not flags
+              for (oi = 2; oi <= length(a); oi++) {
+                oc = substr(a, oi, 1)
+                if (oc == "o") { if (oi == length(a)) skip = 1; break }
+                if (oc == "n") dry = 1
+              }
+            }
             continue
           }
           pos[++np] = a
@@ -552,13 +578,17 @@ END {
 }
 AWK
 
-RECORDS=""; QP=(); QM=(); GCE=0   # GCE: some scan saw a GIT_CONFIG*= assignment   # work list of nested payloads (QM: awk mode to scan each in)
+# QP / QM: work list of nested payloads and the awk mode to scan each in.
+# GCE: some scan saw a GIT_CONFIG*= assignment. DIRCH: some scan saw a directory
+# change (cd, pushd, popd, git -C / --git-dir / --work-tree, GIT_DIR=...).
+RECORDS=""; QP=(); QM=(); GCE=0; DIRCH=0
 ingest() {   # <awk output>: records go to RECORDS, N/S payloads onto the work list
   local line
   while IFS= read -r line; do
     case $line in
       '') ;;
       G) GCE=1 ;;
+      D) DIRCH=1 ;;
       N$'\t'*) QP[${#QP[@]}]=${line#N?}; QM[${#QM[@]}]=b ;;
       S$'\t'*) QP[${#QP[@]}]=${line#S?}; QM[${#QM[@]}]=s ;;
       *) RECORDS="$RECORDS$line"$'\n' ;;
@@ -682,6 +712,7 @@ ref_hit() {   # $1 = refspec token; sets HIT and returns 0 when it can reach a p
     '~'*)
       HIT="$1 (a tilde expansion that cannot be proven safe)"; return 0 ;;
     HEAD|@)
+      if [ "$DIRCH" = 1 ]; then HIT="HEAD ($DIRCH_WHY)"; return 0; fi
       current_branch
       if [ -z "$CUR" ]; then HIT="HEAD (current branch unknown)"; return 0; fi
       if is_protected "$CUR"; then HIT=$CUR; return 0; fi
@@ -699,8 +730,10 @@ git_cfg() {   # <git config args...>: sets CV; returns 0 set, 1 unset, 2 unreada
   case $rc in 0) return 0 ;; 1) CV=""; return 1 ;; *) CV=""; return 2 ;; esac
 }
 
+DIRCH_WHY="the command changes directory or names another git dir, so the branch it pushes cannot be proven; name the remote and the branch: git push origin <branch>"
 bare_hit() {   # <remote from the command line or ""> <repo flag>; a push with no refspec
   local r=$1 k rc pd
+  if [ "$DIRCH" = 1 ]; then HIT="the current branch ($DIRCH_WHY)"; return 0; fi
   current_branch
   if [ -z "$CUR" ]; then HIT="the current branch (detached HEAD or unknown)"; return 0; fi
   if [ "$IS_REPO" = 1 ]; then
