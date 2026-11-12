@@ -1,8 +1,9 @@
 # New project structure — the agent-operating foundation
 
 > **Version 2026-11-12.** This structure was built and proven in a production SaaS repo (MultiAngle.ai). It adds
-> 2025–26 best practice from the official Claude Code docs (checked against Claude Code 2.1.304), Anthropic
-> engineering posts, Fowler, matklad, Google SRE, OWASP and the GitHub docs.
+> 2025–26 best practice from the official Claude Code docs (checked against Claude Code 2.1.304; the
+> version-dependent facts re-checked against 2.1.322 on 2026-11-12), Anthropic engineering posts, Fowler, matklad,
+> Google SRE, OWASP and the GitHub docs.
 >
 > **Who this is for:** a Claude Code session opened at the root of a project, new or existing.
 >
@@ -484,7 +485,7 @@ paths:
 | SessionStart → `bearings-check.sh` | Prints the orientation and staleness lines | Open, always exits 0 (informational) |
 | SessionStart, matcher `compact` → `restore-state.sh` | Re-injects `.planning/STATE.md` → `## Current focus` after compaction | Open, always exits 0 |
 | PreToolUse `Bash` → `require-pr-on-blocker.sh`, with `"onFailure": "block"` | Blocks a push to a protected branch while STATE.md has an unresolved push blocker | **Closed** |
-| `permissions.deny` on `.env`, `.env.local`, `.env.*.local`, `.env.development`, `.env.production`, `.env.test`, `secrets/**` | Claude's file tools can't read secrets. `.env.example` stays editable. Add any other real env-file names found in Discovery. | Holds in every mode, including bypassPermissions |
+| `permissions.deny` on `.env`, `.env.local`, `.env.*.local`, `.env.development`, `.env.production`, `.env.test` at any depth (`Read(**/.env)` and so on), plus `./secrets/**` | Claude's file tools can't read secrets, including a monorepo's `apps/<name>/.env.local`. `.env.example` stays editable: the names are listed one by one because `Read(**/.env.*)` would block it too. Add any other real env-file names found in Discovery. | Holds in every mode, including bypassPermissions |
 | `permissions.ask` on `git push` and `rtk git push` | Every push asks the human, as a second layer behind the hook | Still prompts in bypassPermissions |
 
 Set **`.claude/guard-push.json` → `protectedBranches`** to the default branch and the production branch found in §2, for example `["main", "production"]`. Shell globs are allowed: `"release/*"`.
@@ -747,7 +748,7 @@ The principle behind the list: **agents don't remember prose, so make invariants
   - Real secrets live in the host's secret store.
   - Never put them in `settings.json` `env` or in committed files.
   - Claude `permissions.deny` covers the real env files (§7).
-- **DAY-1: gitleaks** as a pre-commit hook (`rev: v8.30.1`, the latest tag on 2026-10-19; `pre-commit autoupdate` moves it forward). The hook id is `gitleaks`. For a manual scan, run `gitleaks git --staged`. Add GitHub secret scanning and push protection where available.
+- **DAY-1: gitleaks** as a pre-commit hook (`rev: v8.30.1`, the latest tag on 2026-11-12; `pre-commit autoupdate` moves it forward). The hook id is `gitleaks`. For a manual scan, run `gitleaks git --staged`. Add GitHub secret scanning and push protection where available.
 - **DAY-1: GitHub Actions hardening.**
   - The workflow-level `permissions:` is read-only by default, granted per job.
   - Third-party actions are pinned to full commit SHAs.
@@ -838,7 +839,7 @@ depends on it, and §2 step 8 reports what is missing.
 - **Pre-push:** the build runs only as the last step before promoting to production.
 - **Worktrees for parallel work:**
   - Use `EnterWorktree`, and add `.claude/worktrees/` to `.gitignore`.
-  - A `.worktreeinclude` file (gitignore syntax, for example a `.env.local` line) makes worktrees that Claude creates copy those gitignored files. It doesn't apply to a manual `git worktree add`.
+  - A `.worktreeinclude` file (gitignore syntax, for example a `.env.local` line) makes every worktree Claude Code creates copy those gitignored files. The docs promise nothing for a worktree you add by hand with `git worktree add`; copy the files yourself there.
   - A fresh worktree needs its dependencies installed first.
 - **The stash is shared** between all worktrees and sessions. Never use a bare `git stash` / `git stash pop`. Use a WIP commit, or `git stash push -u -m "<unique tag>"` and then `git stash apply <sha>`.
 - **Never commit straight to production.** Never force-push a shared branch.
@@ -849,13 +850,13 @@ depends on it, and §2 step 8 reports what is missing.
 
 | Extra | Trigger | Note |
 |---|---|---|
-| **AGENTS.md** | Another tool is used (Codex, Cursor, Copilot, Gemini CLI) | Put tool-neutral content in `AGENTS.md`. Start `CLAUDE.md` with `@AGENTS.md`, then a `## Claude Code` section. Claude Code reads AGENTS.md on its own only when no CLAUDE.md exists. Prefer the import over a symlink. |
+| **AGENTS.md** | Another tool is used (Codex, Cursor, Copilot, Gemini CLI) | Put tool-neutral content in `AGENTS.md`. Start `CLAUDE.md` with `@AGENTS.md`, then a `## Claude Code` section. Claude Code (2.1.277+) reads AGENTS.md on its own only when no CLAUDE.md exists in the working directory or above it; `CLAUDE.local.md` and `.claude/CLAUDE.md` count as one, `~/.claude/CLAUDE.md` does not. Prefer the import over a symlink. |
 | **Stop-hook verify gate** | Typecheck runs under about 20 s | §7 |
 | **CODEOWNERS** on `.claude/`, `CLAUDE.md`, `AGENTS.md`, `.mcp.json` | A second person gets write access | |
 | **`.gitattributes`** `.planning/codebase/** linguist-generated=true` | Generated docs clutter PR diffs | |
 | **Rule debugging** | A rule seems ignored | `/doctor prompt-audit` (2.1.283+) finds stale or conflicting instructions. A temporary `InstructionsLoaded` hook in `.claude/settings.local.json` that logs its stdin shows which rules loaded and why. |
 | **Sandbox** (`sandbox.enabled`, `filesystem.denyRead`, `network.allowedDomains`) | Unattended runs | The only thing that stops a subprocess from reading secrets |
-| **Headless or CI Claude** | Running `claude -p` on a repo you don't trust | `claude -p` runs a repo's hooks and `.mcp.json` **without a trust prompt**. `--bare` skips hooks, skills, plugins, MCP, memory and CLAUDE.md, and needs an API key. |
+| **Headless or CI Claude** | Running `claude -p` on a repo you don't trust | `claude -p` runs a repo's hooks and `.mcp.json` **without a trust prompt**. `--bare` skips hooks, skills, plugins, MCP, memory and CLAUDE.md. It doesn't use the subscription login, so it needs an API key, an `apiKeyHelper` or cloud-provider credentials. |
 | **`.mcp.json`** | Project MCP servers | Reference secrets as `${VAR}`; never inline them |
 | **Long autonomous runs** | Multi-hour agent runs | A `feature_list.json` in which agents may only flip `passes`, a progress log, and an `init.sh` that starts the app |
 
@@ -1268,7 +1269,7 @@ updates:
   ```yaml
   repos:
     - repo: https://github.com/gitleaks/gitleaks
-      rev: v8.30.1        # latest tag on 2026-10-19; `pre-commit autoupdate` moves it forward
+      rev: v8.30.1        # latest tag on 2026-11-12; `pre-commit autoupdate` moves it forward
       hooks:
         - id: gitleaks
   ```
@@ -1299,7 +1300,7 @@ updates:
 
 ## Sources (checked 2026-10-19)
 
-**Claude Code docs:**
+**Claude Code docs** (re-checked 2026-11-12 against Claude Code 2.1.322):
 - Memory, rules and AGENTS.md: https://code.claude.com/docs/en/memory
 - Hooks, exit codes and `onFailure`: https://code.claude.com/docs/en/hooks
 - Hooks guide: https://code.claude.com/docs/en/hooks-guide
